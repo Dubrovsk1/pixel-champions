@@ -590,7 +590,9 @@ const MUS={on:true,ctx:null,master:null,started:false,playing:false,ti:0,step:0,
 const SILENT_WAV='data:audio/wav;base64,UklGRvQHAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YdAHAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==';
 function unlockIOSAudio(){
   try{if(navigator.audioSession)navigator.audioSession.type='playback'}catch(e){}
-  if(MUS.unlockEl)return;try{const el=new Audio(SILENT_WAV);el.loop=true;el.setAttribute('playsinline','');el.play().catch(()=>{});MUS.unlockEl=el}catch(e){}
+  if(MUS.unlocked)return;
+  try{if(!MUS.unlockEl){MUS.unlockEl=new Audio(SILENT_WAV);MUS.unlockEl.loop=true;MUS.unlockEl.setAttribute('playsinline','')}
+    MUS.unlockEl.play().then(()=>{MUS.unlocked=true}).catch(()=>{})}catch(e){}
 }
 function musicInit(){
   if(MUS.ctx)return;try{MUS.ctx=new (window.AudioContext||window.webkitAudioContext)();}catch(e){return}
@@ -620,6 +622,8 @@ function scheduleStep(tr,st,t){
 }
 function musicTick(){
   const c=MUS.ctx;if(!c||!MUS.playing)return;const tr=PLAYLIST[MUS.ti];if(tr.file)return;
+  if(c.state!=='running')return;
+  if(MUS.next<c.currentTime-0.05)MUS.next=c.currentTime+0.05; // контекст только что ожил — не играем «пропущенные» ноты разом
   while(MUS.next<c.currentTime+0.25){
     scheduleStep(tr,MUS.step,MUS.next);MUS.next+=60/tr.bpm/4;MUS.step++;
     if(MUS.step>=tr.steps){MUS.step=0;MUS.loops++;if(MUS.loops*tr.steps*60/tr.bpm/4>=50){nextTrack(true);return}}
@@ -635,8 +639,9 @@ function startTrack(i){
 function nextTrack(){startTrack(MUS.ti+1)}
 function musicPlay(){
   if(!MUS.on)return;musicInit();if(!MUS.ctx)return;
-  if(MUS.ctx.state==='suspended')MUS.ctx.resume();
-  if(MUS.playing)return;MUS.playing=true;
+  if(MUS.ctx.state!=='running')MUS.ctx.resume().catch(()=>{});
+  if(MUS.playing){if(MUS.el&&MUS.el.paused)MUS.el.play().catch(()=>{});return}
+  MUS.playing=true;
   MUS.master.gain.cancelScheduledValues(MUS.ctx.currentTime);MUS.master.gain.setTargetAtTime(0.55,MUS.ctx.currentTime,0.3);
   if(!MUS.started){MUS.started=true;startTrack(Math.floor(Math.random()*PLAYLIST.length))}else{MUS.next=MUS.ctx.currentTime+0.08;if(MUS.el)MUS.el.play().catch(()=>{});showNowPlaying(PLAYLIST[MUS.ti])}
   if(!MUS.timer)MUS.timer=setInterval(musicTick,40);
@@ -675,17 +680,21 @@ function syncSound(){$('#soundBtn').textContent='ЗВУК: '+(MUS.on?'ВКЛ':'�
 $('#soundBtn').onclick=()=>{MUS.on=!MUS.on;Store.set('pc_music',MUS.on?'1':'0');syncSound();if(MUS.on)sfx.crowdStart();else sfx.crowdStop()};
 $('#musicBtn').onclick=e=>{e.stopPropagation();MUS.on=!MUS.on;Store.set('pc_music',MUS.on?'1':'0');syncSound();if(MUS.on)musicPlay();else musicStop()};
 // звук в браузере можно включить только после касания экрана
-document.addEventListener('pointerdown',()=>{
-  if(!MUS.on)return;unlockIOSAudio();musicInit();if(MUS.ctx&&MUS.ctx.state!=='running')MUS.ctx.resume();
+// iPhone разрешает звук только на «отпускание» пальца (touchend/click), а не на касание —
+// поэтому пробуем на всех трёх событиях, пока звук реально не заработает.
+function audioKick(){
+  if(!MUS.on)return;unlockIOSAudio();musicInit();if(!MUS.ctx)return;
+  if(MUS.ctx.state!=='running')MUS.ctx.resume().then(()=>{if(screen!=='game')musicPlay();else sfx.crowdStart()}).catch(()=>{});
   if(screen!=='game')musicPlay();else sfx.crowdStart();
-},{capture:true});
+}
+for(const ev of ['pointerdown','touchend','click'])document.addEventListener(ev,audioKick,{capture:true,passive:true});
 
 /* ================== Звуки матча ================== */
 // Всё синтезируется на лету: свисток, удары, подкаты, сейвы, гул трибун и рёв при голе.
 const SFX={gain:null,crowd:null,crowdF:null,crowdG:null,lastBounce:0};
 function sfxReady(){
   if(!MUS.on||G&&G.auto)return false;musicInit();if(!MUS.ctx)return false;
-  if(MUS.ctx.state==='suspended')MUS.ctx.resume();
+  if(MUS.ctx.state!=='running')MUS.ctx.resume().catch(()=>{});
   if(!SFX.gain){SFX.gain=MUS.ctx.createGain();SFX.gain.gain.value=0.8;SFX.gain.connect(MUS.ctx.destination)}
   return true;
 }
@@ -1441,7 +1450,7 @@ if(tg&&tg.onEvent)tg.onEvent('viewportChanged',()=>{resize();if(screen==='s-menu
 function togglePause(){if(!G||screen!=='game')return;paused=!paused;$('#pausePanel').style.display=paused?'flex':'none';}
 $('#pauseBtn').onclick=togglePause;$('#resumeBtn').onclick=togglePause;
 $('#quitBtn').onclick=()=>{paused=false;$('#pausePanel').style.display='none';G=null;if(G_tourMatch)showTour();else show('s-menu')};
-document.addEventListener('visibilitychange',()=>{if(MUS.ctx){if(document.hidden)MUS.ctx.suspend();else if(MUS.playing)MUS.ctx.resume()}if(document.hidden&&G&&screen==='game'&&!paused)togglePause()});
+document.addEventListener('visibilitychange',()=>{if(MUS.ctx){if(document.hidden)MUS.ctx.suspend();else if(MUS.playing||SFX.crowd)MUS.ctx.resume().catch(()=>{})}if(document.hidden&&G&&screen==='game'&&!paused)togglePause()});
 
 let last=0,acc=0;const DT=1000/60;
 function loop(ts){
