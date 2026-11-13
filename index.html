@@ -585,6 +585,13 @@ const midiOf=n=>{const m=/^([A-G]#?)(\d)$/.exec(n);return m?12*(+m[2]+1)+NOTE[m[
 const freq=m=>440*Math.pow(2,(m-69)/12);
 function chordOf(n){const m=/^([A-G]#?)(m?)$/.exec(n);return{root:NOTE[m[1]],minor:!!m[2]}}
 const MUS={on:true,ctx:null,master:null,started:false,playing:false,ti:0,step:0,next:0,loops:0,timer:null,el:null,toastT:0,disc:0,shown:false};
+// iPhone в беззвучном режиме глушит веб-звук. Просим режим «плеера» и запускаем тихую дорожку —
+// после этого iOS играет звук игры, как музыкальное приложение, даже с выключенным звонком.
+const SILENT_WAV='data:audio/wav;base64,UklGRvQHAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YdAHAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==';
+function unlockIOSAudio(){
+  try{if(navigator.audioSession)navigator.audioSession.type='playback'}catch(e){}
+  if(MUS.unlockEl)return;try{const el=new Audio(SILENT_WAV);el.loop=true;el.setAttribute('playsinline','');el.play().catch(()=>{});MUS.unlockEl=el}catch(e){}
+}
 function musicInit(){
   if(MUS.ctx)return;try{MUS.ctx=new (window.AudioContext||window.webkitAudioContext)();}catch(e){return}
   MUS.master=MUS.ctx.createGain();MUS.master.gain.value=0;MUS.master.connect(MUS.ctx.destination);
@@ -668,7 +675,10 @@ function syncSound(){$('#soundBtn').textContent='ЗВУК: '+(MUS.on?'ВКЛ':'�
 $('#soundBtn').onclick=()=>{MUS.on=!MUS.on;Store.set('pc_music',MUS.on?'1':'0');syncSound();if(MUS.on)sfx.crowdStart();else sfx.crowdStop()};
 $('#musicBtn').onclick=e=>{e.stopPropagation();MUS.on=!MUS.on;Store.set('pc_music',MUS.on?'1':'0');syncSound();if(MUS.on)musicPlay();else musicStop()};
 // звук в браузере можно включить только после касания экрана
-document.addEventListener('pointerdown',()=>{if(screen!=='game')musicPlay()},{capture:true});
+document.addEventListener('pointerdown',()=>{
+  if(!MUS.on)return;unlockIOSAudio();musicInit();if(MUS.ctx&&MUS.ctx.state!=='running')MUS.ctx.resume();
+  if(screen!=='game')musicPlay();else sfx.crowdStart();
+},{capture:true});
 
 /* ================== Звуки матча ================== */
 // Всё синтезируется на лету: свисток, удары, подкаты, сейвы, гул трибун и рёв при голе.
