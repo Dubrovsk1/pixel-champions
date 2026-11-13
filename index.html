@@ -244,6 +244,7 @@ body[data-screen=s-pick] #nowPlaying{bottom:calc(var(--bot,0px) + 100px)}
       <div id="pausePanel">
         <h2>ПАУЗА</h2>
         <button class="btn" id="resumeBtn">ПРОДОЛЖИТЬ</button>
+        <button class="btn sec" id="soundBtn">ЗВУК: ВКЛ</button>
         <button class="btn sec" id="quitBtn">ВЫЙТИ В МЕНЮ</button>
       </div>
     </div>
@@ -663,14 +664,60 @@ function drawMusicIcon(){
   for(const [x,y,w,h] of [[1,3,2,4],[3,2,1,6],[4,1,1,8]])c.fillRect(x,y,w,h);
   if(MUS.on){c.fillStyle='#ffd84a';c.fillRect(6,3,1,4);c.fillRect(8,2,1,6)}else{c.fillStyle='#ff5a5a';for(let i=0;i<4;i++){c.fillRect(6+i,3+i,1,1);c.fillRect(9-i,3+i,1,1)}}
 }
-$('#musicBtn').onclick=e=>{e.stopPropagation();MUS.on=!MUS.on;Store.set('pc_music',MUS.on?'1':'0');drawMusicIcon();if(MUS.on)musicPlay();else musicStop()};
+function syncSound(){$('#soundBtn').textContent='ЗВУК: '+(MUS.on?'ВКЛ':'ВЫКЛ');drawMusicIcon()}
+$('#soundBtn').onclick=()=>{MUS.on=!MUS.on;Store.set('pc_music',MUS.on?'1':'0');syncSound();if(MUS.on)sfx.crowdStart();else sfx.crowdStop()};
+$('#musicBtn').onclick=e=>{e.stopPropagation();MUS.on=!MUS.on;Store.set('pc_music',MUS.on?'1':'0');syncSound();if(MUS.on)musicPlay();else musicStop()};
 // звук в браузере можно включить только после касания экрана
 document.addEventListener('pointerdown',()=>{if(screen!=='game')musicPlay()},{capture:true});
+
+/* ================== Звуки матча ================== */
+// Всё синтезируется на лету: свисток, удары, подкаты, сейвы, гул трибун и рёв при голе.
+const SFX={gain:null,crowd:null,crowdF:null,crowdG:null,lastBounce:0};
+function sfxReady(){
+  if(!MUS.on||G&&G.auto)return false;musicInit();if(!MUS.ctx)return false;
+  if(MUS.ctx.state==='suspended')MUS.ctx.resume();
+  if(!SFX.gain){SFX.gain=MUS.ctx.createGain();SFX.gain.gain.value=0.8;SFX.gain.connect(MUS.ctx.destination)}
+  return true;
+}
+function sTone(type,f0,f1,t,dur,vol){const c=MUS.ctx,o=c.createOscillator(),g=c.createGain();o.type=type;o.frequency.setValueAtTime(f0,t);if(f1)o.frequency.exponentialRampToValueAtTime(f1,t+dur);
+  g.gain.setValueAtTime(vol,t);g.gain.exponentialRampToValueAtTime(0.0008,t+dur);o.connect(g);g.connect(SFX.gain);o.start(t);o.stop(t+dur+0.02)}
+function sNoise(t,dur,vol,type,f,q,f1){const c=MUS.ctx,s=c.createBufferSource(),fl=c.createBiquadFilter(),g=c.createGain();s.buffer=MUS.noise;s.loop=true;
+  fl.type=type;fl.frequency.setValueAtTime(f,t);if(f1)fl.frequency.exponentialRampToValueAtTime(f1,t+dur);fl.Q.value=q||1;
+  g.gain.setValueAtTime(0.0008,t);g.gain.exponentialRampToValueAtTime(vol,t+Math.min(0.03,dur/3));g.gain.exponentialRampToValueAtTime(0.0008,t+dur);
+  s.connect(fl);fl.connect(g);g.connect(SFX.gain);s.start(t);s.stop(t+dur+0.02)}
+const sfx={
+  kick(power){if(!sfxReady())return;const t=MUS.ctx.currentTime,p=clamp(power,0,1);
+    sTone('sine',190+p*60,55,t,0.12+p*0.06,0.5+p*0.35);sNoise(t,0.05,0.25+p*0.2,'bandpass',1800,1.2);
+    if(p>0.55)sNoise(t+0.02,0.32,0.16*p,'bandpass',900,0.8,3500)}, // свист рассекаемого воздуха при сильном ударе
+  bounce(){if(!sfxReady())return;const now=performance.now();if(now-SFX.lastBounce<120)return;SFX.lastBounce=now;const t=MUS.ctx.currentTime;sTone('sine',260,110,t,0.08,0.25)},
+  slide(){if(!sfxReady())return;const t=MUS.ctx.currentTime;sNoise(t,0.35,0.3,'lowpass',2600,0.7,500)},
+  steal(){if(!sfxReady())return;const t=MUS.ctx.currentTime;sTone('square',520,null,t,0.06,0.09);sTone('square',780,null,t+0.06,0.09,0.09);sNoise(t,0.08,0.2,'bandpass',900,1)},
+  save(){if(!sfxReady())return;const t=MUS.ctx.currentTime;sTone('sine',140,60,t,0.15,0.6);sNoise(t,0.1,0.3,'lowpass',1200,0.8);
+    sNoise(t+0.05,1.1,0.35,'bandpass',650,0.6,420)}, // «ууух» трибун
+  blip(){if(!sfxReady())return;const t=MUS.ctx.currentTime;sTone('square',880,null,t,0.05,0.05)},
+  whistle(n,long){if(!sfxReady())return;const c=MUS.ctx;let t=c.currentTime;
+    for(let i=0;i<n;i++){const d=long&&i===n-1?0.9:0.32,o=c.createOscillator(),lfo=c.createOscillator(),lg=c.createGain(),g=c.createGain();
+      o.type='square';o.frequency.value=2650;lfo.frequency.value=38;lg.gain.value=90;lfo.connect(lg);lg.connect(o.frequency);
+      const f=c.createBiquadFilter();f.type='bandpass';f.frequency.value=2700;f.Q.value=3;
+      g.gain.setValueAtTime(0.0008,t);g.gain.exponentialRampToValueAtTime(0.22,t+0.02);g.gain.setValueAtTime(0.22,t+d-0.05);g.gain.exponentialRampToValueAtTime(0.0008,t+d);
+      o.connect(f);f.connect(g);g.connect(SFX.gain);o.start(t);lfo.start(t);o.stop(t+d+0.02);lfo.stop(t+d+0.02);t+=d+0.12}},
+  goal(){if(!sfxReady())return;const t=MUS.ctx.currentTime;
+    sNoise(t,3.2,0.75,'bandpass',700,0.5,1300);sNoise(t+0.15,2.6,0.35,'highpass',2500,0.5);       // рёв стадиона
+    [0,4,7,12].forEach((st,i)=>sTone('square',392*Math.pow(2,st/12),null,t+0.1+i*0.11,0.5,0.07)); // фанфары
+    sTone('sawtooth',196,null,t+0.55,0.9,0.08);sTone('sawtooth',247,null,t+0.55,0.9,0.06)},       // дудка-горн
+  crowdStart(){if(!sfxReady()||SFX.crowd)return;const c=MUS.ctx,s=c.createBufferSource(),f=c.createBiquadFilter(),g=c.createGain();
+    s.buffer=MUS.noise;s.loop=true;f.type='bandpass';f.frequency.value=520;f.Q.value=0.6;g.gain.value=0.0008;g.gain.exponentialRampToValueAtTime(0.09,c.currentTime+1.5);
+    s.connect(f);f.connect(g);g.connect(SFX.gain);s.start();SFX.crowd=s;SFX.crowdF=f;SFX.crowdG=g},
+  crowdStop(){if(!SFX.crowd)return;const c=MUS.ctx;SFX.crowdG.gain.setTargetAtTime(0.0008,c.currentTime,0.25);const s=SFX.crowd;setTimeout(()=>{try{s.stop()}catch(e){}},1200);SFX.crowd=null},
+  crowdMood(){ // трибуны оживляются, когда мяч у ворот
+    if(!SFX.crowd||!G)return;const b=G.ball,d=Math.min(b.y-FT,FB-b.y),heat=clamp(1-(d-20)/90,0,1),c=MUS.ctx;
+    SFX.crowdG.gain.setTargetAtTime(0.07+heat*0.13,c.currentTime,0.4);SFX.crowdF.frequency.setTargetAtTime(480+heat*380,c.currentTime,0.4)}
+};
 
 /* ================== Экраны и навигация ================== */
 let screen='s-menu';
 function show(id){document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));$('#'+id).classList.add('active');screen=id;document.body.dataset.screen=id;$('#'+id).scrollTop=0;if(id==='s-menu')resizeIntro();
-  if(id==='game')musicStop();else if(MUS.started)musicPlay();$('#musicBtn').classList.toggle('on',id!=='game');}
+  if(id==='game'){musicStop();sfx.crowdStart()}else{sfx.crowdStop();if(MUS.started)musicPlay()}$('#musicBtn').classList.toggle('on',id!=='game');}
 function lookFor(team,i){return{skin:SKINS[(i*5+team*3)%SKINS.length],hair:HAIRS[(i*3+team*2)%HAIRS.length],style:STYLES[(i*4+team)%STYLES.length]}}
 const THEMES=[['navy','СИНИЙ'],['pitch','ГАЗОН'],['graphite','ГРАФИТ'],['stadium','СТАДИОН']];
 function applyTheme(t){document.body.dataset.theme=t;const n=THEMES.find(x=>x[0]===t);$('#themeBtn').textContent='ФОН: '+(n?n[1]:'');}
@@ -1027,6 +1074,7 @@ function kick(p,tx,ty,speed,loft){
   const b=G.ball,dx=tx-p.x,dy=ty-p.y,d=hyp(dx,dy)||1;
   b.owner=null;b.vx=dx/d*speed;b.vy=dy/d*speed;b.x=p.x+dx/d*4;b.y=p.y+dy/d*4;
   b.vz=loft||0;b.lastTeam=p.team;b.checked.clear();p.pickCd=16;p.kickT=8;
+  sfx.kick((speed-1.2)/3.2);
 }
 // Выбор паса. Человек: адресат ищется в направлении джойстика (конус ~60°);
 // если там никого — пас «на ход» в свободную зону, и к мячу бежит ближайший партнёр.
@@ -1075,7 +1123,7 @@ function doShoot(p,power,aim){
 function tryTackle(p,o,base){
   p.tackCd=45;
   const ch=base+(G.teams[p.team].def-G.teams[o.team].atk)*0.05;
-  if(Math.random()<ch){give(p);o.stun=30;o.pickCd=35;haptic('light')}
+  if(Math.random()<ch){give(p);o.stun=30;o.pickCd=35;haptic('light');sfx.steal()}
   else if(p.role!=='gk')p.stun=20;
 }
 
@@ -1153,7 +1201,7 @@ function updateCtrl(){
   if(dc>70&&dn<dc-35){G.ctrl=r[0];G.swFx=14}
 }
 function ranked(){const b=G.ball,bp={x:b.x+b.vx*8,y:b.y+b.vy*8};return teamOf(0).filter(p=>p.role!=='gk').sort((a,c)=>dist(a,bp)-dist(c,bp))}
-function selectPlayer(p){G.ctrl=p;G.lockT=90;G.assist=null;G.swFx=14;haptic('light')}
+function selectPlayer(p){G.ctrl=p;G.lockT=90;G.assist=null;G.swFx=14;haptic('light');sfx.blip()}
 function switchPlayer(){const r=ranked();selectPlayer(G.ctrl===r[0]?r[1]:r[0])}
 function humanStep(){
   const c=G.ctrl,inp=getInput(),b=G.ball;if(!c)return;
@@ -1182,6 +1230,7 @@ function humanStep(){
 }
 // Подкат: игрок скользит в направлении джойстика (или к мячу); задел мяч — он твой.
 function startSlide(c,inp){
+  sfx.slide();
   const b=G.ball,tgt=b.owner||b;let dx=inp.x,dy=inp.y;
   if(!dx&&!dy){dx=tgt.x-c.x;dy=tgt.y-c.y}
   const d=hyp(dx,dy)||1;c.sdx=dx/d;c.sdy=dy/d;c.slide=18;c.slideCd=45;c.slideHit=false;haptic('light');
@@ -1196,7 +1245,7 @@ function stepSlides(){
       const o=b.owner;
       if(o&&o.team!==p.team&&dist(p,o)<7){
         p.slideHit=true;const ch=0.8+(G.teams[p.team].def-G.teams[o.team].atk)*0.05;
-        if(Math.random()<ch){give(p);o.stun=34;o.pickCd=40;haptic('medium');G.pressT=0}
+        if(Math.random()<ch){give(p);o.stun=34;o.pickCd=40;haptic('medium');G.pressT=0;sfx.steal()}
       } else if(!o&&dist(p,b)<6&&b.z<4){p.slideHit=true;give(p)}
     }
     if(p.slide===0&&b.owner!==p)p.stun=16;
@@ -1207,7 +1256,7 @@ function stepPress(){
   const c=G.ctrl,o=G.ball.owner;
   if(c&&o&&o.team===1&&!c.slide&&c.stun<=0&&dist(c,o)<6.5){
     G.pressT=(G.pressT||0)+1+G.teams[0].def*0.12-G.teams[1].atk*0.08;G.pressO=o;
-    if(G.pressT>=55){give(c);o.stun=26;o.pickCd=35;G.pressT=0;haptic('medium')}
+    if(G.pressT>=55){give(c);o.stun=26;o.pickCd=35;G.pressT=0;haptic('medium');sfx.steal()}
   } else G.pressT=Math.max(0,(G.pressT||0)-1.5);
 }
 
@@ -1216,7 +1265,7 @@ function step(){
   stepBallZ();
   if(G.state!=='play'){
     if(--G.stateT<=0){
-      if(G.state==='kickoff')setState('play',0,'');
+      if(G.state==='kickoff'){setState('play',0,'');sfx.whistle(1)}
       else if(G.state==='goal')kickoff(G.nextKick);
       else if(G.state==='half')kickoff(1);
       else if(G.state==='end'){endMatch();return}
@@ -1224,8 +1273,8 @@ function step(){
     I.aPress=I.bPress=I.bRelease=false;I.tap=null;return;
   }
   G.time++;
-  if(G.time>=HALF&&!G.halfDone){G.halfDone=true;setState('half',100,'ПЕРЕРЫВ');return}
-  if(G.time>=MATCH){setState('end',130,'ФИНАЛ\n'+G.score[0]+':'+G.score[1]);haptic('medium');return}
+  if(G.time>=HALF&&!G.halfDone){G.halfDone=true;setState('half',100,'ПЕРЕРЫВ');sfx.whistle(2,true);return}
+  if(G.time>=MATCH){setState('end',130,'ФИНАЛ\n'+G.score[0]+':'+G.score[1]);haptic('medium');sfx.whistle(3,true);return}
   const b=G.ball;
   for(const p of G.players){p.slideCd=Math.max(0,(p.slideCd||0)-1);p.stun=Math.max(0,p.stun-1);p.pickCd=Math.max(0,p.pickCd-1);p.tackCd=Math.max(0,p.tackCd-1);p.sprint=Math.max(0,p.sprint-1);p.sprintCd=Math.max(0,p.sprintCd-1);if(p.kickT)p.kickT--}
   updateCtrl();humanStep();
@@ -1249,17 +1298,17 @@ function step(){
   else{
     const py=b.y;
     b.x+=b.vx;b.y+=b.vy;b.vx*=0.975;b.vy*=0.975;b.roll+=hyp(b.vx,b.vy);
-    if(b.x<FL+1){b.x=FL+1;b.vx=-b.vx*0.6}
-    if(b.x>FR-1){b.x=FR-1;b.vx=-b.vx*0.6}
-    if(b.y<FT){if(b.x>GL&&b.x<GR){if(b.y<FT-3)return goal(0)}else{b.y=FT;b.vy=-b.vy*0.6}}
-    if(b.y>FB){if(b.x>GL&&b.x<GR){if(b.y>FB+3)return goal(1)}else{b.y=FB;b.vy=-b.vy*0.6}}
+    if(b.x<FL+1){b.x=FL+1;b.vx=-b.vx*0.6;if(Math.abs(b.vx)>0.5)sfx.bounce()}
+    if(b.x>FR-1){b.x=FR-1;b.vx=-b.vx*0.6;if(Math.abs(b.vx)>0.5)sfx.bounce()}
+    if(b.y<FT){if(b.x>GL&&b.x<GR){if(b.y<FT-3)return goal(0)}else{b.y=FT;b.vy=-b.vy*0.6;if(Math.abs(b.vy)>0.5)sfx.bounce()}}
+    if(b.y>FB){if(b.x>GL&&b.x<GR){if(b.y>FB+3)return goal(1)}else{b.y=FB;b.vy=-b.vy*0.6;if(Math.abs(b.vy)>0.5)sfx.bounce()}}
     const sp=hyp(b.vx,b.vy);
     for(const k of G.players){
       if(k.role!=='gk'||k.team===b.lastTeam||k.stun>0||b.checked.has(k)||sp<1.6)continue;
       if((py-k.y)*(b.y-k.y)>0)continue;
       b.checked.add(k);const dx=Math.abs(b.x-k.x);if(dx>15)continue;
       const ch=(k.team===1?G.diff.gk:0.80)+(G.teams[k.team].def-3)*0.03-(sp-3)*0.08-dx*0.025+((b.shotDist||0)>80?0.15:0);
-      if(Math.random()<ch){give(k);k.x=clamp(b.x,FL+3,FR-3);haptic('light');break}
+      if(Math.random()<ch){give(k);k.x=clamp(b.x,FL+3,FR-3);haptic('light');sfx.save();break}
       k.stun=18;k.x+=Math.sign(b.x-k.x)*Math.min(dx,6);
     }
     for(const p of G.players){
@@ -1272,7 +1321,7 @@ function step(){
 function stepBallZ(){const b=G.ball;if(b.owner)return;b.z+=b.vz;b.vz-=0.07;if(b.z<0){b.z=0;b.vz=-b.vz*0.45;if(b.vz<0.15)b.vz=0}}
 function goal(team){
   G.score[team]++;G.nextKick=1-team;G.ball.vx*=0.3;G.ball.vy*=0.3;
-  setState('goal',110,'ГОЛ!');haptic('heavy');updateHud();
+  setState('goal',110,'ГОЛ!');haptic('heavy');updateHud();sfx.goal();
   const k=G.kits[team],gy=team===0?FT-4:FB+4;G.flash=1;
   for(let i=0;i<90;i++)G.parts.push({x:CX+rnd(-20,20),y:gy,vx:rnd(-1.6,1.6),vy:(team===0?1:-1)*rnd(0.5,2.6),life:rnd(60,120),c:[k.main,k.sec,k.trim,'#ffd84a','#ffffff'][i%5],r:Math.random()*6});
 }
@@ -1354,6 +1403,7 @@ function render(dt){
   ctx.setTransform(1,0,0,1,0,0);
   if(G.flash>0){ctx.fillStyle='rgba(255,255,255,'+G.flash*0.35+')';ctx.fillRect(0,0,VW*RS,VH*RS);G.flash=Math.max(0,G.flash-dt/400)}
   drawRadar();updateHud();
+  if(SFX.crowd&&(G.frame=(G.frame||0)+1)%15===0)sfx.crowdMood();
 }
 function drawRadar(){
   const s=0.3,mw=(FR-FL)*s,mh=(FB-FT)*s,ox=VW*RS-mw-12,oy=12;
@@ -1401,7 +1451,7 @@ function loop(ts){
   try{const t=await Store.get('pc_tour');if(t)TS=JSON.parse(t)}catch(e){}
   try{const th=await Store.get('pc_theme');applyTheme(th||'navy')}catch(e){applyTheme('navy')}
   try{const m=await Store.get('pc_music');if(m==='0')MUS.on=false}catch(e){}
-  drawMusicIcon();$('#musicBtn').classList.toggle('on',screen!=='game');
+  syncSound();$('#musicBtn').classList.toggle('on',screen!=='game');
 })();
 resizeIntro();
 requestAnimationFrame(loop);
